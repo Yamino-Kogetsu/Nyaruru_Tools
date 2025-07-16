@@ -1,0 +1,4 @@
+If you want to add new language to choose in a game
+1. Add new line Name: "STATIC_TEXT_{Language}", Value: "{Language}" in tabs #ui of each xlsx file.
+2. Place it in same folder of exist xlsx file.
+3. Use repacker and patcher.

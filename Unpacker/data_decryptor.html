@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Data Folder Reverser</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 300px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Game Data Folder Reverser</h1>
+    <p>Select a folder containing <code>.data</code> files from the game to decrypt them.</p>
+    <input type="file" id="dataFolder" webkitdirectory directory multiple />
+    <br>
+    <button id="processButton">Decrypt and Download All</button>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('dataFolder');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        // --- Logic copied directly from the game's main.js ---
+
+        // These functions are the core of the obfuscation. Because XOR is its own
+        // inverse, the same functions can be used for decryption.
+
+        function cjs() {
+            return 0x9ff7a50cad6d;
+        }
+
+        function cjs2() {
+            return 0xa8ca225b8d437430;
+        }
+
+        function remc(i, j, k) {
+            const i1 = 0x5f5a617 % (i + 1);
+            const i2 = i1 % 0x10;
+            const i3 = i2 * 4;
+            const i4 = 0xf << i3;
+            const i5 = i4 & j;
+            const i6 = i5 >> i3;
+            return k ^ i6;
+        }
+
+        /**
+         * The decryption function. It takes a Uint8Array and an offset.
+         * In the game's packaging process, the offset is the position of the file
+         * within the .data archive. Since we are decrypting the whole archive at once,
+         * we can treat the offset as 0.
+         */
+        function decryptData(u8, offset = 0) {
+            const checksum = cjs();
+            for (let i = 0; i < u8.length; i++) {
+                // This is the XOR operation that reverses the obfuscation
+                u8[i] = remc(i + offset, checksum, u8[i]);
+            }
+        }
+
+        // --- Tool Logic ---
+
+        async function processFile(file) {
+            return new Promise((resolve, reject) => {
+                log(`Reading file: ${file.name} (Size: ${file.size} bytes)`);
+                const reader = new FileReader();
+
+                reader.onload = function(e) {
+                    try {
+                        const arrayBuffer = e.target.result;
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        log(`Starting decryption for ${file.name}...`);
+
+                        // Decrypt the entire data blob.
+                        // The game encrypts each file with an offset corresponding to its
+                        // position in the archive. We are decrypting the whole archive
+                        // as one big file, so the offset for the first byte is 0.
+                        decryptData(uint8Array, 0);
+
+                        log(`Decryption complete for ${file.name}.`);
+
+                        // Create a Blob from the decrypted data
+                        const blob = new Blob([uint8Array], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+
+                        // Create a link and trigger the download
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${file.name}.decrypted`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        log(`Decrypted file downloaded as: ${a.download}`);
+                        resolve();
+
+                    } catch (error) {
+                        log(`An error occurred with ${file.name}: ${error.message}`);
+                        console.error(error);
+                        reject(error);
+                    }
+                };
+
+                reader.onerror = function() {
+                    const errorMessage = `Error reading file: ${reader.error}`;
+                    log(errorMessage);
+                    reject(new Error(errorMessage));
+                };
+
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files || folderInput.files.length === 0) {
+                log('Error: Please select a folder first.');
+                return;
+            }
+
+            const files = Array.from(folderInput.files);
+            log(`Found ${files.length} files to process.`);
+
+            for (const file of files) {
+                if (file.name.endsWith('.data')) {
+                    try {
+                        await processFile(file);
+                    } catch (error) {
+                        log(`Skipping to next file due to error with ${file.name}.`);
+                    }
+                } else {
+                    log(`Skipping non-.data file: ${file.name}`);
+                }
+            }
+
+            log('\nAll files have been processed.');
+        });
+    </script>
+</body>
+</html>

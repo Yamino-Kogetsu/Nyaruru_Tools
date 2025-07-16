@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Backup Restorer</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 20px; }
+        .input-group { margin-bottom: 15px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px;}
+    </style>
+    <!-- We need the JSZip library for creating a zip archive -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <h1>Game Backup Restorer</h1>
+    <p>This tool will find all <code>.js.bak</code> files in the <code>js/nya/</code> directory and prepare them for restoration.</p>
+    
+    <div class="input-group">
+        <label for="gameRoot">Select Game's Root Directory (containing the 'js' folder)</label>
+        <input type="file" id="gameRoot" webkitdirectory directory multiple />
+    </div>
+    
+    <button id="processButton">Restore Backups and Download ZIP</button>
+
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('gameRoot');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files?.length) {
+                log('ERROR: Please select the game root directory first.');
+                return;
+            }
+             if (typeof JSZip === 'undefined') {
+                log('ERROR: JSZip library not loaded. Please check your internet connection.');
+                return;
+            }
+
+            logElement.textContent = ''; // Clear log
+            log('[*] Starting backup restoration process...');
+
+            const allFiles = Array.from(folderInput.files);
+            const zip = new JSZip();
+            let backupsFound = 0;
+
+            // Filter for only the .js.bak files in the correct directory
+            const backupFiles = allFiles.filter(file => {
+                const relativePath = file.webkitRelativePath;
+                // e.g., "MyGame/js/nya/nya_config.js.bak"
+                // We want to match "js/nya/*.js.bak" within the selected folder.
+                const pathParts = relativePath.split('/');
+                return pathParts.length === 4 && pathParts[1] === 'js' && pathParts[2] === 'nya' && pathParts[3].endsWith('.js.bak');
+            });
+
+            if (backupFiles.length === 0) {
+                log("\n[!] No '.js.bak' files found in the 'js/nya/' directory. Nothing to restore.");
+                return;
+            }
+
+            log(`[*] Found ${backupFiles.length} backup file(s). Staging for restoration...`);
+
+            for (const bakFile of backupFiles) {
+                // Get path relative to the selected root, e.g., "js/nya/nya_config.js.bak"
+                const internalPath = bakFile.webkitRelativePath.split('/').slice(1).join('/');
+                const restoredPath = internalPath.slice(0, -4); // Remove ".bak"
+                
+                log(`  - Restoring '${internalPath}' to '${restoredPath}'`);
+                
+                // Read the backup file content and add it to the zip with the restored name
+                const content = await bakFile.arrayBuffer();
+                zip.file(restoredPath, content);
+                backupsFound++;
+            }
+
+            if (backupsFound > 0) {
+                log('\n[*] Generating ZIP file with restored files...');
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'restored_scripts.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                log("\n[✓] Restoration complete! ZIP file download initiated.");
+                log("[*] Extract the contents of 'restored_scripts.zip' into your game's root directory to overwrite the patched files.");
+            } else {
+                 log("\n[!] An unexpected error occurred. No backups were processed.");
+            }
+        });
+    </script>
+</body>
+</html>

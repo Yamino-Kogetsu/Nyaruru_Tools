@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Asset Extractor</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 10px; }
+        strong { color: #005a9c; }
+    </style>
+    <!-- We need the JSZip library for creating a zip archive -->
+    <script src="jszip.min.js"></script>
+</head>
+<body>
+    <h1>Game Asset Extractor</h1>
+    <p>Select the game's root directory. This directory must contain the <strong>.json</strong> and <strong>.data.decrypted</strong> files.</p>
+    <input type="file" id="gameRoot" webkitdirectory directory multiple />
+    <br>
+    <button id="processButton">Extract All Files to ZIP</button>
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('gameRoot');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight; // Auto-scroll
+        }
+
+        /**
+         * Reads a JSON index file and extracts all listed assets from their
+         * corresponding decrypted .data files into a JSZip instance.
+         */
+        async function processIndexAndExtract(indexName, allFiles, openDataFiles, zip) {
+            log(`\n[*] Processing index file: ${indexName}`);
+
+            const indexFile = allFiles.get(indexName);
+            if (!indexFile) {
+                log(`    - Index file not found. Skipping.`);
+                return;
+            }
+
+            let indexData;
+            try {
+                // Read with TextDecoder to handle potential UTF-8 BOM (sig)
+                const indexContent = await indexFile.text();
+                indexData = JSON.parse(indexContent);
+            } catch (e) {
+                log(`[!] ERROR: Could not parse JSON from '${indexName}'. Skipping. Error: ${e.message}`);
+                return;
+            }
+
+            let fileMap = {};
+            let isBootIndex = false;
+            if ("#content" in indexData && typeof indexData["#content"] === 'object') {
+                fileMap = indexData["#content"];
+                isBootIndex = true;
+                log(`    - Detected boot index format. All files will be read from 'boot.data.decrypted'.`);
+            } else {
+                fileMap = indexData;
+                log(`    - Detected resource index format.`);
+            }
+
+            for (const [assetPath, metadata] of Object.entries(fileMap)) {
+                if (typeof metadata !== 'object') {
+                    log(`[!] WARNING: Skipping invalid metadata for asset '${assetPath}'`);
+                    continue;
+                }
+
+                const pos = metadata.pos;
+                const size = metadata.size;
+                const fileId = metadata.file;
+
+                if (pos === undefined || size === undefined) {
+                    log(`[!] WARNING: Incomplete metadata for asset '${assetPath}'. Skipping.`);
+                    continue;
+                }
+
+                try {
+                    const dataFilename = isBootIndex ? "boot.data.decrypted" : `file${fileId}.data.decrypted`;
+                    
+                    if (!openDataFiles.has(dataFilename)) {
+                        const dataFile = allFiles.get(dataFilename);
+                        if (!dataFile) {
+                            log(`[!] ERROR: Required data file '${dataFilename}' not found. Cannot extract '${assetPath}'.`);
+                            continue;
+                        }
+                        log(`    - Caching data file: ${dataFilename}`);
+                        openDataFiles.set(dataFilename, await dataFile.arrayBuffer());
+                    }
+
+                    const dataBuffer = openDataFiles.get(dataFilename);
+                    
+                    log(`    - Extracting '${assetPath}'`);
+
+                    const extractedBytes = dataBuffer.slice(pos, pos + size);
+
+                    if (extractedBytes.byteLength !== size) {
+                         log(`    [!] WARNING: Read ${extractedBytes.byteLength} bytes but expected ${size} for '${assetPath}'. File may be incomplete.`);
+                    }
+
+                    zip.file(assetPath, extractedBytes);
+
+                } catch (e) {
+                    log(`[!] ERROR during extraction of '${assetPath}': ${e.message}`);
+                    continue;
+                }
+            }
+        }
+
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files || folderInput.files.length === 0) {
+                log('Error: Please select the game root folder first.');
+                return;
+            }
+            
+            logElement.textContent = ''; // Clear log
+            log("[*] Starting extraction process...");
+            
+            const allFiles = new Map(Array.from(folderInput.files).map(file => [file.name, file]));
+            log(`[*] Found ${allFiles.size} total files in the selected directory.`);
+
+            // --- NEW: Check for required index files before starting ---
+            const indexesToProcess = [
+                "boot.index.json",
+                "resource.index.json"
+            ];
+
+            const hasAnyIndexFile = indexesToProcess.some(indexName => allFiles.has(indexName));
+
+            if (!hasAnyIndexFile) {
+                log('\n[!] FATAL ERROR: No valid index files found (e.g., "boot.index.json", "resource.index.json").');
+                log("    Please make sure the correct folder is selected and that the index files have been generated first.");
+                log("    Operation cancelled.");
+                return; // Stop execution
+            }
+            // --- End of new check ---
+            
+            const zip = new JSZip();
+            const openDataFiles = new Map();
+
+            for (const indexName of indexesToProcess) {
+                await processIndexAndExtract(indexName, allFiles, openDataFiles, zip);
+            }
+            
+            log('\n[*] Finalizing ZIP archive. This may take a moment...');
+            try {
+                const zipBlob = await zip.generateAsync({
+                    type: "blob",
+                    compression: "DEFLATE",
+                    compressionOptions: { level: 9 }
+                });
+
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `_extracted_files.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                log(`\n[✓] Extraction complete! ZIP file download initiated.`);
+
+            } catch (e) {
+                log(`[!] FATAL ERROR: Could not generate ZIP file. ${e.message}`);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Data Folder Obfuscator</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Game Data Folder Obfuscator</h1>
+    <p>Select the folder containing your repacked data files (e.g., files ending in <code>.data.modified</code>) to apply the final obfuscation.</p>
+    <input type="file" id="dataFolder" webkitdirectory directory multiple />
+    <br>
+    <button id="processButton">Obfuscate All and Download</button>
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('dataFolder');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        // --- Logic copied directly from the game's main.js ---
+        // This is the same logic used for decryption, as XOR is its own inverse.
+        function cjs() { return 0x9ff7a50cad6d; }
+        function remc(i, j, k) {
+            const i1 = 0x5f5a617 % (i + 1);
+            const i2 = i1 % 0x10;
+            const i3 = i2 * 4;
+            const i4 = 0xf << i3;
+            const i5 = i4 & j;
+            const i6 = i5 >> i3;
+            return k ^ i6;
+        }
+        function obfuscateData(u8, offset = 0) {
+            const checksum = cjs();
+            for (let i = 0; i < u8.length; i++) {
+                u8[i] = remc(i + offset, checksum, u8[i]);
+            }
+        }
+
+        /**
+         * Processes a single file: reads, obfuscates, and triggers download.
+         */
+        async function processFile(file) {
+            return new Promise((resolve, reject) => {
+                log(`  - Reading file: ${file.name}`);
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    try {
+                        const arrayBuffer = e.target.result;
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        
+                        log(`    > Starting obfuscation...`);
+                        obfuscateData(uint8Array, 0);
+                        log(`    > Obfuscation complete.`);
+
+                        const blob = new Blob([uint8Array], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+
+                        // Automatically rename the file to what the game expects
+                        const finalName = file.name.replace('.modified', '');
+                        a.href = url;
+                        a.download = finalName;
+                        
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        
+                        log(`    > Downloaded as: ${finalName}`);
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                
+                reader.onerror = function() {
+                    reject(new Error(`Failed to read file: ${file.name}`));
+                };
+
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // --- Tool Logic ---
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files || folderInput.files.length === 0) {
+                log('ERROR: Please select a folder first.');
+                return;
+            }
+            
+            logElement.textContent = ''; // Clear log
+            log('[*] Starting obfuscation process...');
+
+            const filesToProcess = Array.from(folderInput.files).filter(f => f.name.endsWith('.data.modified'));
+            
+            if (filesToProcess.length === 0) {
+                log('\n[!] No ".data.modified" files found in the selected folder. Nothing to do.');
+                return;
+            }
+            
+            log(`[*] Found ${filesToProcess.length} file(s) to obfuscate.`);
+
+            for (const file of filesToProcess) {
+                try {
+                    await processFile(file);
+                } catch (error) {
+                    log(`[!] ERROR processing ${file.name}: ${error.message}`);
+                }
+            }
+
+            log('\n[✓] Obfuscation process complete.');
+        });
+    </script>
+</body>
+</html>

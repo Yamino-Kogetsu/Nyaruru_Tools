@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game File Patcher</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 20px; }
+        .input-group { margin-bottom: 15px; max-width: 500px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px;}
+        input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
+    </style>
+    <!-- We need the JSZip library for creating a zip archive -->
+    <script src="jszip.min.js"></script>
+</head>
+<body>
+    <h1>Game File Patcher for New Languages</h1>
+
+    <div class="input-group">
+        <label for="langName">Language Display Name</label>
+        <input type="text" id="langName" value="STATIC_TEXT_VIETNAMESE">
+    </div>
+
+    <div class="input-group">
+        <label for="langCode">Language Code (for story file, e.g., "vietnamese" for "story-vietnamese.xlsx")</label>
+        <input type="text" id="langCode" value="vietnamese">
+    </div>
+
+    <div class="input-group">
+        <label for="gameRoot">Select Game's Root Directory (containing the 'js' folder)</label>
+        <input type="file" id="gameRoot" webkitdirectory directory multiple />
+    </div>
+    
+    <button id="processButton">Patch Files and Download ZIP</button>
+
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const langNameInput = document.getElementById('langName');
+        const langCodeInput = document.getElementById('langCode');
+        const folderInput = document.getElementById('gameRoot');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        /**
+         * Patches nya_config.js to add a new language option.
+         * @returns {string|null} Patched content, original content if no change needed, or null on error.
+         */
+        function patchLanguageOption(content, langName, langCode) {
+            const pattern = /(\{\s*name:"STATIC_TEXT_GAME_LANGUAGE"[\s\S]*?items\s*:\s*\[)([\s\S]*?)(\])/;
+            const match = content.match(pattern);
+
+            if (!match) {
+                log("[!] ERROR: Could not find the language options block in nya_config.js. Patching failed.");
+                return null;
+            }
+
+            const itemsContent = match[2];
+            if (itemsContent.includes(`para:"${langCode}"`)) {
+                log("[*] Language option already exists. No patch needed.");
+                return content; // Return original content, as no change is made.
+            }
+
+            log("[*] Found language options block. Injecting new language...");
+
+            const newItem = `,\n\t\t\t{name:"${langName}",para:"${langCode}"}`;
+            const lastBraceIndex = itemsContent.lastIndexOf('}');
+            if (lastBraceIndex === -1) {
+                log("[!] ERROR: Malformed items array in nya_config.js.");
+                return null;
+            }
+
+            const patchedItems = itemsContent.substring(0, lastBraceIndex + 1) + newItem + itemsContent.substring(lastBraceIndex + 1);
+            const patchedBlock = match[1] + patchedItems + match[3];
+            return content.replace(match[0], patchedBlock);
+        }
+
+        /**
+         * Patches nya_package.js to add a new story file to the exclusion list.
+         * @returns {string|null} Patched content, original content if no change needed, or null on error.
+         */
+        function patchPackageManager(content, langCode) {
+            const pattern = /(PackageManager\._dlsiteExclude\s*=\s*\[)([\s\S]*?)(\];)/;
+            const match = content.match(pattern);
+
+            if (!match) {
+                log("[!] ERROR: Could not find PackageManager._dlsiteExclude block in nya_package.js. Patching failed.");
+                return null;
+            }
+
+            const itemsContent = match[2];
+            const newStoryFile = `data/story-${langCode}.xlsx`;
+            if (itemsContent.includes(newStoryFile)) {
+                log(`[*] Story file '${newStoryFile}' already in exclusion list. No patch needed.`);
+                return content;
+            }
+
+            log(`[*] Found _dlsiteExclude list. Adding '${newStoryFile}'...`);
+            const patchedItems = itemsContent.trimEnd() + `,\n\t"${newStoryFile}"`;
+            const patchedBlock = match[1] + patchedItems + '\n' + match[3];
+            return content.replace(match[0], patchedBlock);
+        }
+
+
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files?.length) {
+                log('ERROR: Please select the game root directory.');
+                return;
+            }
+            const langName = langNameInput.value;
+            const langCode = langCodeInput.value;
+            if (!langName || !langCode) {
+                log('ERROR: Language Name and Language Code cannot be empty.');
+                return;
+            }
+
+            logElement.textContent = ''; // Clear log
+            log('[*] Starting patching process...');
+
+            const allFiles = new Map(Array.from(folderInput.files).map(f => [f.webkitRelativePath.split('/').slice(1).join('/'), f]));
+            const zip = new JSZip();
+            let success1 = false, success2 = false;
+
+            // --- Patch 1: nya_config.js ---
+            log("\n--- 1. Patching Language Option (nya_config.js) ---");
+            const configPath = "js/nya/nya_config.js";
+            const configFile = allFiles.get(configPath);
+            if (configFile) {
+                const originalContent = await configFile.text();
+                zip.file(`${configPath}.bak`, originalContent); // Create backup in ZIP
+                const patchedContent = patchLanguageOption(originalContent, langName, langCode);
+                if (patchedContent) {
+                    zip.file(configPath, patchedContent);
+                    log(`[✓] Success! Prepared patched '${configPath}' for ZIP.`);
+                    success1 = true;
+                }
+            } else {
+                log(`[!] ERROR: File not found: '${configPath}'. Make sure you selected the correct game root folder.`);
+            }
+
+            // --- Patch 2: nya_package.js ---
+            if(success1) {
+                log("\n--- 2. Patching Package Manager (nya_package.js) ---");
+                const packagePath = "js/nya/nya_package.js";
+                const packageFile = allFiles.get(packagePath);
+                if (packageFile) {
+                    const originalContent = await packageFile.text();
+                    zip.file(`${packagePath}.bak`, originalContent); // Create backup in ZIP
+                    const patchedContent = patchPackageManager(originalContent, langCode);
+                    if (patchedContent) {
+                        zip.file(packagePath, patchedContent);
+                        log(`[✓] Success! Prepared patched '${packagePath}' for ZIP.`);
+                        success2 = true;
+                    }
+                } else {
+                    log(`[!] ERROR: File not found: '${packagePath}'.`);
+                }
+            } else {
+                log("\n[!] Language option patching failed. Aborting further patches.");
+            }
+
+            // --- Finalize ---
+            log("\n" + "-".repeat(50));
+            if (success1 && success2) {
+                log("\n[✓✓] ALL PATCHING SUCCESSFUL!");
+                log("[*] Generating ZIP file with patched files and backups...");
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'game_patch.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                log("[*] Download initiated. Extract the contents of 'game_patch.zip' into your game's root directory.");
+            } else {
+                log("\n[!!] ONE OR MORE PATCHING STEPS FAILED. Please check the logs above. No files were downloaded.");
+            }
+        });
+    </script>
+</body>
+</html>

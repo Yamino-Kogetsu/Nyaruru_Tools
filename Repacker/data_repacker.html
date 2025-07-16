@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Asset Repacker</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 20px; }
+        .folder-input { margin-bottom: 10px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px;}
+    </style>
+    <!-- We need the JSZip library for creating a zip archive -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <h1>Game Asset Repacker</h1>
+
+    <div class="folder-input">
+        <label for="modFolder">1. Select Mod Folder (containing your new/modified files)</label>
+        <input type="file" id="modFolder" webkitdirectory directory multiple />
+    </div>
+
+    <div class="folder-input">
+        <label for="indexFolder">2. Select Original Index Folder (containing the original .json files)</label>
+        <input type="file" id="indexFolder" webkitdirectory directory multiple />
+    </div>
+    
+    <button id="processButton">Repack Files</button>
+
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const modFolderInput = document.getElementById('modFolder');
+        const indexFolderInput = document.getElementById('indexFolder');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        /**
+         * Analyzes mod folder files against original indexes.
+         */
+        function getFileMetadata(modFiles, originalIndexes) {
+            log("\n[*] Analyzing mod folder and comparing with original indexes...");
+            const fileStatus = {};
+            const originalPaths = new Set(Object.keys(originalIndexes));
+            const modPaths = new Set(Array.from(modFiles.keys()));
+
+            // Check new and modified files
+            for (const [relativePathStr, file] of modFiles.entries()) {
+                if (!originalPaths.has(relativePathStr)) {
+                    fileStatus[relativePathStr] = { status: "new", size: file.size };
+                } else {
+                    const originalSize = originalIndexes[relativePathStr]?.size ?? -1;
+                    if (file.size !== originalSize) {
+                        fileStatus[relativePathStr] = { status: "modified", size: file.size };
+                    } else {
+                        fileStatus[relativePathStr] = { status: "unchanged", size: file.size };
+                    }
+                }
+            }
+
+            // Check for missing files
+            for (const path of originalPaths) {
+                if (!modPaths.has(path)) {
+                    fileStatus[path] = { status: "missing", size: originalIndexes[path]?.size ?? 0 };
+                }
+            }
+
+            log("[*] Analysis complete.");
+            return fileStatus;
+        }
+
+        /**
+         * Deep clones a JSON object.
+         */
+        function deepClone(obj) {
+            return JSON.parse(JSON.stringify(obj));
+        }
+        
+        processButton.addEventListener('click', async () => {
+            if (!modFolderInput.files?.length || !indexFolderInput.files?.length) {
+                log('ERROR: Please select both the mod folder and the original index folder.');
+                return;
+            }
+
+            logElement.textContent = ''; // Clear log
+            log('[*] Starting repack process...');
+
+            // --- 1. Prepare file maps ---
+            const modFiles = new Map(Array.from(modFolderInput.files).map(f => [f.webkitRelativePath.split('/').slice(1).join('/'), f]));
+            const indexFiles = new Map(Array.from(indexFolderInput.files).map(f => [f.name, f]));
+
+            // --- 2. Load and combine original indexes ---
+            const bootIndexFile = indexFiles.get("boot.index.json");
+            const resourceIndexFile = indexFiles.get("resource.index.json");
+
+            if (!bootIndexFile || !resourceIndexFile) {
+                log('[!] FATAL ERROR: "boot.index.json" and/or "resource.index.json" not found in the selected index folder.');
+                return;
+            }
+
+            const bootIndex = JSON.parse(await bootIndexFile.text());
+            const resourceIndex = JSON.parse(await resourceIndexFile.text());
+
+            const originalIndexes = {};
+            const sourceMap = {};
+            for (const [k, v] of Object.entries(bootIndex["#content"] || {})) {
+                originalIndexes[k] = v;
+                sourceMap[k] = "boot";
+            }
+            for (const [k, v] of Object.entries(resourceIndex)) {
+                originalIndexes[k] = v;
+                sourceMap[k] = "resource";
+            }
+            
+            // --- 3. Analyze file differences ---
+            const fileMetadata = getFileMetadata(modFiles, originalIndexes);
+
+            // --- 4. Rebuild archives ---
+            const newBootIndex = deepClone(bootIndex);
+            const newResourceIndex = deepClone(resourceIndex);
+            const rebuiltArchives = {}; // To store final ArrayBuffers
+
+            log("\n[*] Rebuilding archives file-by-file...");
+
+            // Group files by archive ID
+            const archivesToBuild = {};
+            const insertAfterKey = "data/story-schinese.xlsx";
+
+            for (const [path, meta] of Object.entries(fileMetadata)) {
+                const originalMeta = originalIndexes[path] || {};
+                const status = meta.status;
+                const suffix = path.split('.').pop().toLowerCase();
+                let archiveId;
+
+                if (sourceMap[path] === "boot") {
+                    archiveId = "boot";
+                } else if (status === "new" && suffix === "xlsx") {
+                    archiveId = 2; // Force new .xlsx files into file2.data
+                } else {
+                    archiveId = originalMeta.file ?? 0;
+                }
+
+                if (!archivesToBuild[archiveId]) archivesToBuild[archiveId] = [];
+                archivesToBuild[archiveId].push(path);
+            }
+
+            for (const [archiveId, assetPaths] of Object.entries(archivesToBuild)) {
+                const isBoot = (archiveId === "boot");
+                const archiveName = isBoot ? "boot.data.modified" : `file${archiveId}.data.modified`;
+                log(`\n--- Rebuilding Archive: ${archiveName} ---`);
+                
+                let currentOffset = 0;
+                const archiveChunks = []; // Store ArrayBuffers to be merged later
+
+                const originalContent = isBoot ? bootIndex["#content"] : resourceIndex;
+                const orderedKeys = Object.keys(originalContent);
+                const outputOrder = [];
+                const addedNewFiles = new Set();
+                
+                // Determine write order
+                for (const key of orderedKeys) {
+                    if (assetPaths.includes(key) && fileMetadata[key].status !== "new") {
+                        outputOrder.push(key);
+                    }
+                    if (key === insertAfterKey) {
+                        for (const p of assetPaths) {
+                            if (fileMetadata[p].status === "new" && p.toLowerCase().endsWith(".xlsx")) {
+                                outputOrder.push(p);
+                                addedNewFiles.add(p);
+                            }
+                        }
+                    }
+                }
+                for (const p of assetPaths) { // Add remaining new files
+                    if (fileMetadata[p].status === "new" && !addedNewFiles.has(p)) {
+                        outputOrder.push(p);
+                    }
+                }
+
+                // Write archive in memory
+                for (const path of outputOrder) {
+                    const status = fileMetadata[path].status;
+                    let contentBuffer;
+                    let sizeWritten = 0;
+
+                    if (status === "missing") {
+                        sizeWritten = fileMetadata[path].size;
+                        contentBuffer = new ArrayBuffer(sizeWritten); // Zero-filled
+                        log(`  [!] Missing:   '${path}' (null padded ${sizeWritten} bytes)`);
+                    } else if (["modified", "unchanged", "new"].includes(status)) {
+                        const file = modFiles.get(path);
+                        contentBuffer = await file.arrayBuffer();
+                        sizeWritten = contentBuffer.byteLength;
+                        const mark = status === "unchanged" ? "*" : status === "modified" ? "✓" : "+";
+                        
+                        // --- THIS IS THE CORRECTED LINE ---
+                        const paddedStatus = (status.charAt(0).toUpperCase() + status.slice(1)).padEnd(9);
+                        log(`  [${mark}] ${paddedStatus}: '${path}'`);
+
+                    } else {
+                        continue;
+                    }
+                    
+                    archiveChunks.push(contentBuffer);
+                    
+                    // Update index metadata
+                    if (isBoot) {
+                        if (!newBootIndex["#content"][path]) newBootIndex["#content"][path] = {};
+                        newBootIndex["#content"][path]['pos'] = currentOffset;
+                        newBootIndex["#content"][path]['size'] = sizeWritten;
+                    } else {
+                        if (!newResourceIndex[path]) newResourceIndex[path] = {};
+                        newResourceIndex[path]['file'] = archiveId;
+                        newResourceIndex[path]['pos'] = currentOffset;
+                        newResourceIndex[path]['size'] = sizeWritten;
+                    }
+
+                    currentOffset += sizeWritten;
+                }
+                rebuiltArchives[archiveName] = new Blob(archiveChunks);
+            }
+            
+            // Reorder final resource index to match logic
+            const reorderedResourceIndex = {};
+            for (const key of Object.keys(resourceIndex)) {
+                reorderedResourceIndex[key] = newResourceIndex[key];
+                if (key === insertAfterKey) {
+                    for (const k2 in newResourceIndex) {
+                        if (!resourceIndex[k2] && k2.toLowerCase().endsWith(".xlsx")) {
+                             reorderedResourceIndex[k2] = newResourceIndex[k2];
+                        }
+                    }
+                }
+            }
+            for (const k3 in newResourceIndex) {
+                if (!reorderedResourceIndex[k3]) reorderedResourceIndex[k3] = newResourceIndex[k3];
+            }
+
+
+            // --- 5. Save modified files to a ZIP ---
+            log("\n[*] Writing final modified index files and data archives to ZIP...");
+            const zip = new JSZip();
+            zip.file("boot.index_modified.json", JSON.stringify(newBootIndex, null, 2));
+            zip.file("resource.index_modified.json", JSON.stringify(reorderedResourceIndex, null, 2));
+            log("    - Added rebuilt boot index to zip.");
+            log("    - Added rebuilt resource index to zip.");
+
+            for (const [name, blob] of Object.entries(rebuiltArchives)) {
+                zip.file(name, blob);
+                log(`    - Added ${name} to zip.`);
+            }
+
+            const zipBlob = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(zipBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '_repacked_files.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            log("\n[✓] Rebuild complete! ZIP file download initiated.");
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nyaruru Modding Tool Suite</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 2em;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            border-bottom: 2px solid #444;
+            padding-bottom: 1em;
+            margin-bottom: 2em;
+        }
+        header h1 {
+            color: #4dc9b0;
+            margin: 0;
+        }
+        .workflow {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2em;
+        }
+        .step {
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 1.5em;
+        }
+        .step h2 {
+            margin-top: 0;
+            color: #569cd6;
+            border-bottom: 1px solid #444;
+            padding-bottom: 0.5em;
+        }
+        .tool-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .tool-list li {
+            margin-bottom: 1em;
+        }
+        .tool-link {
+            display: block;
+            background-color: #333;
+            color: #d4d4d4;
+            text-decoration: none;
+            padding: 1em;
+            border-radius: 5px;
+            border-left: 5px solid #444;
+            transition: background-color 0.2s, border-left-color 0.2s;
+        }
+        .tool-link:hover {
+            background-color: #3c3c3c;
+            border-left-color: #4dc9b0;
+        }
+        .tool-link strong {
+            display: block;
+            font-size: 1.1em;
+            margin-bottom: 0.3em;
+            color: #fff;
+        }
+        .tool-link span {
+            font-size: 0.9em;
+            color: #999;
+        }
+        footer {
+            text-align: center;
+            margin-top: 3em;
+            padding-top: 1em;
+            border-top: 1px solid #444;
+            font-size: 0.9em;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Nyaruru Modding Tool Suite</h1>
+            <p>A collection of tools for unpacking, modifying, and repacking game assets (Nyaruru).</p>
+        </header>
+
+        <div class="workflow">
+            <!-- =========== STEP 1: UNPACKER ============= -->
+            <div class="step">
+                <h2>1. Unpacker Tools</h2>
+                <ul class="tool-list">
+                    <li>
+                        <a href="Unpacker/data_decryptor.html" class="tool-link" target="_blank">
+                            <strong>Decrypt .data Files</strong>
+                            <span>Decrypts entire folders of game data archives (e.g., `file2.data`).</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="Unpacker/data_index2json.html" class="tool-link" target="_blank">
+                            <strong>Convert .index to .json</strong>
+                            <span>Converts compressed `.index` files into readable `.json` format.</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="Unpacker/data_extractor.html" class="tool-link" target="_blank">
+                            <strong>Extract All Assets</strong>
+                            <span>Uses the decrypted data and JSON indexes to extract all game assets into a single ZIP file.</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- =========== STEP 2: REPACKER ============= -->
+            <div class="step">
+                <h2>2. Repacker Tools</h2>
+                <ul class="tool-list">
+                    <li>
+                        <a href="Repacker/data_repacker.html" class="tool-link" target="_blank">
+                            <strong>Repack Modified Files</strong>
+                            <span>Rebuilds game data archives from your folder of modified files and the original JSON indexes.</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="Repacker/data_encryptor.html" class="tool-link" target="_blank">
+                            <strong>Encrypt .data Files</strong>
+                            <span>Applies the final encryption to your repacked `.data.modified` files.</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="Repacker/data_json2index.html" class="tool-link" target="_blank">
+                            <strong>Pack .index Files</strong>
+                            <span>Compresses and encrypts your modified `.json` index files back into the game's format.</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- =========== STEP 3: PATCHER ============= -->
+            <div class="step">
+                <h2>3. Patcher & Utility Tools</h2>
+                <ul class="tool-list">
+                    <li>
+                        <a href="Patcher/data_patcher.html" class="tool-link" target="_blank">
+                            <strong>Patch Game for New Language</strong>
+                            <span>Patches core game scripts (`nya_config.js`, `nya_package.js`) to add a new language option.</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="Patcher/data_restorer.html" class="tool-link" target="_blank">
+                            <strong>Restore Original Scripts</strong>
+                            <span>Restores original scripts from the `.js.bak` backups created by the patcher.</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <footer>
+            <p>Follow the steps in order for the best results. Each tool will open in a new tab.</p>
+        </footer>
+    </div>
+
+</body>
+</html>

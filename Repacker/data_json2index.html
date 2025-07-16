@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Index Folder Packer</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            height: 700px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 10px; }
+    </style>
+    <!-- We need Pako to compress the data before obfuscating -->
+    <script src="pako.min.js"></script>
+</head>
+<body>
+    <h1>Game Index Folder Packer</h1>
+    <p>Select the folder containing your modified JSON index files (e.g., <code>resource.index_modified.json</code>) to pack them.</p>
+    <input type="file" id="jsonFolder" webkitdirectory directory multiple />
+    <br>
+    <button id="processButton">Pack All Index Files</button>
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('jsonFolder');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        // --- Obfuscation logic from main.js ---
+        function cjs() { return 0x9ff7a50cad6d; }
+        function remc(i, j, k) {
+            const i1 = 0x5f5a617 % (i + 1);
+            const i2 = i1 % 0x10;
+            const i3 = i2 * 4;
+            const i4 = 0xf << i3;
+            const i5 = i4 & j;
+            const i6 = i5 >> i3;
+            return k ^ i6;
+        }
+        function obfuscateData(u8, offset = 0) {
+            const checksum = cjs();
+            for (let i = 0; i < u8.length; i++) {
+                u8[i] = remc(i + offset, checksum, u8[i]);
+            }
+        }
+
+        /**
+         * Processes a single JSON file: reads, compresses, obfuscates, and downloads.
+         */
+        async function processIndexFile(file) {
+            return new Promise((resolve, reject) => {
+                log(`  - Reading file: ${file.name}`);
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    try {
+                        const jsonString = e.target.result;
+                        log(`    > JSON file loaded. Compressing...`);
+
+                        // Step 1: Compress the JSON string using pako.deflate
+                        const compressedData = pako.deflate(jsonString);
+                        log(`    > Compression complete. Original: ${jsonString.length} bytes, Compressed: ${compressedData.length} bytes.`);
+
+                        // Step 2: Obfuscate the compressed data
+                        log('    > Starting obfuscation...');
+                        obfuscateData(compressedData, 0);
+                        log('    > Obfuscation complete.');
+
+                        // Step 3: Download the final binary blob
+                        const blob = new Blob([compressedData], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        
+                        // Automatically rename file to what the game expects
+                        const finalName = file.name.replace('_modified.json', '');
+                        a.href = url;
+                        a.download = finalName;
+                        
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        
+                        log(`    > Downloaded as: ${finalName}`);
+                        resolve();
+
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                
+                reader.onerror = function() {
+                    reject(new Error(`Failed to read file: ${file.name}`));
+                };
+
+                reader.readAsText(file);
+            });
+        }
+
+        // --- Tool Logic ---
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files || folderInput.files.length === 0) {
+                log('ERROR: Please select a folder first.');
+                return;
+            }
+            if (typeof pako === 'undefined') {
+                log('ERROR: Pako library not loaded. Make sure `pako.min.js` is accessible.');
+                return;
+            }
+
+            logElement.textContent = ''; // Clear log
+            log('[*] Starting index packing process...');
+
+            const filesToProcess = Array.from(folderInput.files).filter(f => f.name.endsWith('_modified.json'));
+
+            if (filesToProcess.length === 0) {
+                log('\n[!] No "_modified.json" files found in the selected folder. Nothing to do.');
+                return;
+            }
+
+            log(`[*] Found ${filesToProcess.length} index file(s) to pack.`);
+
+            for (const file of filesToProcess) {
+                try {
+                    await processIndexFile(file);
+                } catch (error) {
+                    log(`[!] ERROR processing ${file.name}: ${error.message}`);
+                }
+            }
+
+            log('\n[✓] Index packing process complete.');
+        });
+    </script>
+</body>
+</html>

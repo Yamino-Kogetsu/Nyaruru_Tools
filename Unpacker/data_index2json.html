@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Index Folder Reverser</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { color: #333; }
+        #log {
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin-top: 20px;
+            max-height: 700px; /* Increased height */
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            color: black;
+        }
+        button { font-size: 16px; padding: 10px 15px; margin-top: 10px; }
+    </style>
+    <!-- We need the Pako library for decompression -->
+    <script src="pako.min.js"></script>
+</head>
+<body>
+    <h1>Game Index Folder Reverser</h1>
+    <p>Select a folder containing index files (e.g., <code>resource.index</code>) to see their JSON content.</p>
+    <input type="file" id="indexFolder" webkitdirectory directory multiple />
+    <br>
+    <button id="processButton">Process All Index Files</button>
+    <h3>Output Log:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const processButton = document.getElementById('processButton');
+        const folderInput = document.getElementById('indexFolder');
+        const logElement = document.getElementById('log');
+
+        function log(message) {
+            console.log(message);
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        // --- Logic copied directly from the game's main.js ---
+
+        function cjs() {
+            return 0x9ff7a50cad6d;
+        }
+
+        function cjs2() {
+            return 0xa8ca225b8d437430;
+        }
+
+        function remc(i, j, k) {
+            const i1 = 0x5f5a617 % (i + 1);
+            const i2 = i1 % 0x10;
+            const i3 = i2 * 4;
+            const i4 = 0xf << i3;
+            const i5 = i4 & j;
+            const i6 = i5 >> i3;
+            return k ^ i6;
+        }
+
+        function decryptData(u8, offset = 0) {
+            const checksum = cjs();
+            for (let i = 0; i < u8.length; i++) {
+                u8[i] = remc(i + offset, checksum, u8[i]);
+            }
+        }
+
+        // --- Tool Logic ---
+
+        async function processIndexFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = function(e) {
+                    try {
+                        const arrayBuffer = e.target.result;
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        log('File loaded. Starting decryption...');
+
+                        decryptData(uint8Array, 0);
+                        log('Decryption complete. Decompressing data...');
+
+                        const decompressed = pako.inflate(uint8Array);
+                        log('Decompression complete. Parsing JSON...');
+
+                        const jsonString = new TextDecoder().decode(decompressed);
+                        const jsonObject = JSON.parse(jsonString);
+                        log('JSON parsed successfully!\n');
+                        
+                        log(`--- JSON Content for ${file.name} ---`);
+                        log(JSON.stringify(jsonObject, null, 2));
+                        log(`--- End of JSON for ${file.name} ---\n`);
+
+                        const blob = new Blob([JSON.stringify(jsonObject, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${file.name}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        console.log(`JSON data for ${file.name} downloaded as: ${a.download}`);
+                        resolve();
+
+                    } catch (error) {
+                        console.error(error);
+                        reject(new Error(`${error.message} - Is this a valid index file?`));
+                    }
+                };
+
+                reader.onerror = function() {
+                    reject(new Error(`Could not read file: ${reader.error}`));
+                };
+
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        processButton.addEventListener('click', async () => {
+            if (!folderInput.files || folderInput.files.length === 0) {
+                log('Error: Please select a folder first.');
+                return;
+            }
+
+            const files = Array.from(folderInput.files);
+            logElement.textContent = ''; // Clear previous logs
+            log(`Found ${files.length} files. Starting processing...\n`);
+
+            let processedCount = 0;
+            for (const file of files) {
+                if (file.name.endsWith('.index')) {
+                    log(`--- Processing: ${file.name} (Size: ${file.size} bytes) ---`);
+                    try {
+                        await processIndexFile(file);
+                        processedCount++;
+                    } catch (error) {
+                        log(`ERROR: Failed to process ${file.name}. ${error.message}\n`);
+                    }
+                } else {
+                    log(`Skipping non-index file: ${file.name}\n`);
+                }
+            }
+
+            log(`\n--- Batch complete. Processed ${processedCount} index file(s). ---`);
+        });
+    </script>
+</body>
+</html>
